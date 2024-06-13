@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "SphericalTexture"
-version = "0.0.0"
+version = "0.0.1"
 description = "Angular projections of 2/3D image objects and subsequent spherical harmonics analysis"
 readme = "README.md"
 authors = ["Oane Gros <oane.gros@embl.de>"]
@@ -10,9 +10,10 @@ authors = ["Oane Gros <oane.gros@embl.de>"]
 python = ">= 3.9"
 scikit-image = "*"
 numba = "*"
-pyshtools = ">= 4.10"
+pyshtools = "== 4.10.3"
 ducc0 = "*"
 scipy = "*"
+appdirs = "*"
 
 [tool.poetry.dev-dependencies]
 pytest = "*"

@@ -34,40 +34,38 @@ import matplotlib.pyplot as plt
 _condition = threading.RLock()
 pysh.backends.select_preferred_backend(backend="ducc", nthreads=1)
 
-class SphericalTexture():
-    def __init__(self, projections=[], output_types=[]):
-        self.ndim = None
-        self.margin = 0  # necessary for calling compute_local
-
+class SphericalTextureGenerator():
+    def __init__(self, ndim=3, projections=[], output_types=[], scale=80 ):
+        self.ndim = ndim
         self.projectionorder = [
             "Intensity", # mean intensity
             "Shape",
         ] # projection order is index in _st_project(), this is split like this for numba accelaration
         self.selected_projections = np.zeros(len(self.projectionorder), dtype=bool)  # contains selection of which projections should be done
-        self.features = None
+        self.features = []
         self.output_types = [
             'Spectrum',
             'Polarization Direction',
-            'Full Projection'
+            'Full Projection',
+            'Complex Decomposition'
         ]
         for proj in projections:
             self.selected_projections[self.projectionorder.index(proj)] = True
             for output_type in output_types:
                 self.features.append(f"{proj} {output_type}")
-
         self.raysLUT = None
         self.bin_start, self.bin_ends, self.n_coarse = None, None, None
 
         # Hyperparameters
-        self.scale = 80  # transforms to cube of size scale by scale by scale - projections are scaled to sample π*scale
+        self.scale = scale  # transforms to cube of size scale by scale by scale - projections are scaled to sample π*scale
         self.reduced_spectrum_length = 20
+        print(self.features,self.selected_projections)
         return
 
-    def project_image(self, image, binary_mask, save_path=None):
-        features = list(self.features.keys())
-        return self.unwrap_and_expand(image, binary_mask, axes, features, save_path )
+    def process_image(self, image, binary_mask, save_path=None):
+        return self.unwrap_and_expand(image, binary_mask, save_path)
 
-    def unwrap_and_expand(self, image, binary_bbox, features):
+    def unwrap_and_expand(self, image, binary_bbox, save_path):
         t0 = time.time()
         rawbbox = image
         mask_object = binary_bbox
@@ -79,13 +77,14 @@ class SphericalTexture():
         # resizing of data is also done in 3D for 2D data
         cube = resize(image, (self.scale, self.scale, self.scale), preserve_range=True, order=1)
 
-        mask_cube = resize(img_as_bool(mask_object), tuple([self.scale] * len(image.shape)), order=0)
+        mask_cube = resize(mask_object != 0, tuple([self.scale] * len(image.shape)), order=0)
+
         segmented_cube = np.where(mask_cube, cube, -1)
 
         t1 = time.time()
 
         unwrapped = _st_lookup(segmented_cube, self.raysLUT, int(np.pi * self.scale), self.selected_projections)
-
+        print(unwrapped)
         t2 = time.time()
 
         result = {}
@@ -114,6 +113,7 @@ class SphericalTexture():
                 zero, w = pysh.expand.SHGLQ(int(np.pi * self.scale))
                 coeffs = pysh.expand.SHExpandGLQ(projection, w=w, zero=zero)
                 power = spectrum(coeffs, unit="per_l")
+                
 
             # bin higher degrees in 2log spaced bins:
             if self.n_coarse is None:
@@ -126,7 +126,7 @@ class SphericalTexture():
                 projfeatname = f"{which_proj} {output_type}"
                 if projfeatname in self.features:
                     if output_type == 'Full Projection':
-                        result[projfeatname] = projection.flatten()
+                        result[projfeatname] = projection
                     if output_type == 'Polarization Direction':
                         # optional: add bandpassing here
                         peak = np.unravel_index(np.argmax(projection, axis=None), projection.shape)
@@ -135,6 +135,8 @@ class SphericalTexture():
                         result[projfeatname] = peak
                     if output_type == 'Spectrum':
                         result[projfeatname] = np.concatenate([power[: self.n_coarse], np.array(means)])
+                    if output_type == 'Complex Decomposition':
+                        result[projfeatname] = coeffs
         t3 = time.time()
 
         print("time to do full unwrap and expand: \t", t3 - t0)
@@ -166,9 +168,12 @@ class SphericalTexture():
     
     @lru_cache
     def get_ray_table(self, ndim):
+        if ndim is None:
+            raise ValueError("ndim cannot be None")
         # try to load or generate new
         # loading requires retyping of the dictionary for numba, which slows it down (see: https://github.com/numba/numba/issues/8797)
-        fpath = user_cache_dir('SphericalTexture', "OG") / f"sphericalLUT{self.scale}_{ndim}D.pickle"
+        fpath = Path(user_cache_dir('SphericalTexture', "OG")) / f"sphericalLUT{self.scale}_{ndim}D.pickle"
+        fpath.parent.mkdir(parents=True, exist_ok=True)
         try:
             t0 = time.time()
             with open(fpath, "rb") as handle:

@@ -1,1 +1,1 @@
-from spherical_texture import SphericalTexture
+from .spherical_texture import SphericalTextureGenerator
