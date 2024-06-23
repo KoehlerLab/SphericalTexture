@@ -35,23 +35,29 @@ _condition = threading.RLock()
 pysh.backends.select_preferred_backend(backend="ducc", nthreads=1)
 
 class SphericalTextureGenerator():
-    def __init__(self, ndim=3, projections=[], output_types=[], scale=80 ):
+    def __init__(self, ndim=3, projections=['Intensity'], output_types=['Condensed Spectrum'], scale=80 ):
         self.ndim = ndim
-        self.projectionorder = [
+        self.optional_projections = [
             "Intensity", # mean intensity
             "Shape",
-        ] # projection order is index in _st_project(), this is split like this for numba accelaration
-        self.selected_projections = np.zeros(len(self.projectionorder), dtype=bool)  # contains selection of which projections should be done
-        self.features = []
-        self.output_types = [
+        ] 
+        self.optional_output_types = [
             'Spectrum',
+            'Condensed Spectrum',
             'Polarization Direction',
             'Full Projection',
             'Complex Decomposition'
         ]
+
+        self.selected_projections = np.zeros(len(self.optional_projections), dtype=bool)  # contains selection of which projections should be done
+        self.features = []
         for proj in projections:
-            self.selected_projections[self.projectionorder.index(proj)] = True
+            if proj not in self.optional_projections:
+                raise ValueError(f"unexpected projection {projection}")
+            self.selected_projections[self.optional_projections.index(proj)] = True
             for output_type in output_types:
+                if output_type not in self.optional_output_types:
+                    raise ValueError(f"unexpected output type {output_type}")
                 self.features.append(f"{proj} {output_type}")
         self.raysLUT = None
         self.bin_start, self.bin_ends, self.n_coarse = None, None, None
@@ -59,13 +65,12 @@ class SphericalTextureGenerator():
         # Hyperparameters
         self.scale = scale  # transforms to cube of size scale by scale by scale - projections are scaled to sample π*scale
         self.reduced_spectrum_length = 20
-        print(self.features,self.selected_projections)
         return
 
-    def process_image(self, image, binary_mask, save_path=None):
-        return self.unwrap_and_expand(image, binary_mask, save_path)
+    def process_image(self, image, binary_mask):
+        return self.unwrap_and_expand(image, binary_mask)
 
-    def unwrap_and_expand(self, image, binary_bbox, save_path):
+    def unwrap_and_expand(self, image, binary_bbox):
         t0 = time.time()
         rawbbox = image
         mask_object = binary_bbox
@@ -84,14 +89,14 @@ class SphericalTextureGenerator():
         t1 = time.time()
 
         unwrapped = _st_lookup(segmented_cube, self.raysLUT, int(np.pi * self.scale), self.selected_projections)
-        print(unwrapped)
+        # print(unwrapped)
         t2 = time.time()
 
         result = {}
         projectedix = 0
         used_projections = [which_proj for which_proj, projected in enumerate(self.selected_projections) if projected]
         for projectedix, projection in enumerate(unwrapped):
-            which_proj = self.projectionorder[used_projections[projectedix]]
+            which_proj = self.optional_projections[used_projections[projectedix]]
 
             if self.ndim == 2:
                 projection = projection[0, : int(self.scale * np.pi)]
@@ -99,10 +104,6 @@ class SphericalTextureGenerator():
             if np.max(projection) != 0:
                 projection /= np.std(projection)
             projection -= np.mean(projection)
-
-            if save_path:
-                self.save_prjs(save_path, which_proj, projection)
-
 
             projectedix += 1
             if self.ndim == 2:
@@ -122,7 +123,7 @@ class SphericalTextureGenerator():
             freqs = scipy.fft.fftfreq(251)[: (len(projection) // 2) + 1]
             
 
-            for output_type in self.output_types:
+            for output_type in self.optional_output_types:
                 projfeatname = f"{which_proj} {output_type}"
                 if projfeatname in self.features:
                     if output_type == 'Full Projection':
@@ -133,13 +134,15 @@ class SphericalTextureGenerator():
                         peak /= np.array(projection.shape)
                         peak *= np.pi * 2
                         result[projfeatname] = peak
-                    if output_type == 'Spectrum':
+                    if output_type == 'Condensed Spectrum':
                         result[projfeatname] = np.concatenate([power[: self.n_coarse], np.array(means)])
+                    if output_type == 'Spectrum':
+                        result[projfeatname] = power
                     if output_type == 'Complex Decomposition':
                         result[projfeatname] = coeffs
         t3 = time.time()
 
-        print("time to do full unwrap and expand: \t", t3 - t0)
+        # print("time to do full unwrap and expand: \t", t3 - t0)
         return result
     
     def save_ray_table(self, fpath, rays):
@@ -184,10 +187,10 @@ class SphericalTextureGenerator():
             )
             for k, v in newLUT.items():
                 typed_rays[k] = v
-            print("loaded ray table in: ", time.time() - t0)
+            # print("loaded ray table in: ", time.time() - t0)
             return typed_rays
         except Exception as e:
-            print("recalculating LUT")
+            # print("recalculating LUT")
             t0 = time.time()
             rays = typed.Dict.empty(
                 key_type=typeof((1, 1)),
@@ -196,18 +199,9 @@ class SphericalTextureGenerator():
             _st_fill_ray_table(self.scale, GLQGridCoord(int(np.pi * self.scale)), rays, ndim)
             self.save_ray_table(fpath, rays)
             t1 = time.time()
-            print("time to make ray table: ", t1 - t0)
+            # print("time to make ray table: ", t1 - t0)
             return rays
 
-
-    def save_prjs(self, save_path, which_proj,projection):
-        plt.imsave(
-            f"{save_path}_{which_proj}_projection.png",
-            resize(
-                projection, (int(np.pi * self.scale) + 1, int(np.pi * self.scale) * 2 + 1), preserve_range=True, order=0
-            ),
-        )
-        return
 
 
 # All numba-accelerated functions cannot receive self, so are not class functions
