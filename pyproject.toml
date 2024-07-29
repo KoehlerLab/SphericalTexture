@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "SphericalTexture"
-version = "0.0.2"
+version = "0.0.3"
 description = "Angular projections of 2/3D image objects and subsequent spherical harmonics analysis"
 readme = "README.md"
 authors = ["Oane Gros <oane.gros@embl.de>"]
