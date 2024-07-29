@@ -10,7 +10,7 @@ authors = ["Oane Gros <oane.gros@embl.de>"]
 python = ">= 3.9"
 scikit-image = "*"
 numba = "*"
-pyshtools = "== 4.10.3"
+pyshtools = "*"
 ducc0 = "*"
 scipy = "*"
 appdirs = "*"
