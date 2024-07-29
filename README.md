@@ -6,12 +6,14 @@ This toolkit extracts Spherical Textures: Angular projections of 2D or 3D image 
 
 Installing can best be done through `conda` with
 ```
-conda install sphericaltexture
+conda install -c conda-forge sphericaltexture
 ```
 or to create a dedicated environment:
 ```
-conda create -n sphericaltexture_env sphericaltexture
+conda create -n sphericaltexture_env -c conda-forge sphericaltexture
 ```
+Note, this is a lot faster with an updated version of conda! If it takes over a minute, consider updating conda.
+
 
 alternatively, one can also install through `pip` with
 ```
