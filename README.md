@@ -35,7 +35,9 @@ pip install SphericalTexture
 ### Usage as API
 
 Construct a `SphericalTextureGenerator` object, with the dimensionality of the data and the desired spherical projections and output types.
-This stg.process_image() takes an image and binary mask, and returns a dictionary with numpy arrays for each projection and output type. Note that this function expects a single object at a time, and any mask management should be handled upstream from Spherical Texture generation.
+This stg.process_image() takes an image and binary mask, and returns a dictionary with numpy arrays for each projection and output type. Note that this function expects a **single object** at a time without padding, and any mask management should be handled upstream from Spherical Texture generation.
+
+The center of projection can (optionally) be set, with a numpy array with the coordinate of the center of projection in image space. 
 
 ```
 from sphericaltexture import SphericalTextureGenerator
@@ -45,7 +47,7 @@ stg = SphericalTextureGenerator(
         projections=['Shape','Intensity'], 
         output_types=["Spectrum", "Condensed Spectrum", "Polarization Direction", "Full Projection", "Complex Decomposition"]
     )
-results = stg.process_image(imgdata, mask)
+results = stg.process_image(imgdata, mask, center_of_projection=np.array([10,10,10]))
 
 # only 20-value Intensity spectrum:
 stg = SphericalTextureGenerator()

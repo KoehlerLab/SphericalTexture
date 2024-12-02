@@ -19,6 +19,7 @@ from pyshtools.expand import SHExpandGLQ
 from pyshtools.spectralanalysis import spectrum
 import scipy
 import ducc0
+import gzip
 
 import threading
 from functools import lru_cache
@@ -40,6 +41,7 @@ class SphericalTextureGenerator():
         self.optional_projections = [
             "Intensity", # mean intensity
             "Shape",
+            "Intensity Weighted Average",
         ] 
         self.optional_output_types = [
             'Spectrum',
@@ -67,10 +69,10 @@ class SphericalTextureGenerator():
         self.reduced_spectrum_length = 20
         return
 
-    def process_image(self, image, binary_mask):
-        return self.unwrap_and_expand(image, binary_mask)
+    def process_image(self, image, binary_mask, center_of_projection=None):
+        return self.unwrap_and_expand(image, binary_mask, center_of_projection)
 
-    def unwrap_and_expand(self, image, binary_bbox):
+    def unwrap_and_expand(self, image, binary_bbox, center_of_projection=None):
         t0 = time.time()
         rawbbox = image
         mask_object = binary_bbox
@@ -78,18 +80,26 @@ class SphericalTextureGenerator():
         if self.raysLUT == None:
             with _condition:
                 self.raysLUT = self.get_ray_table(self.ndim)
-
+        
         # resizing of data is also done in 3D for 2D data
-        cube = resize(image, (self.scale, self.scale, self.scale), preserve_range=True, order=1)
+        scalevec = np.array([self.scale, self.scale, self.scale])
+        cube = resize(image, scalevec, preserve_range=True, order=1)
 
-        mask_cube = resize(mask_object != 0, tuple([self.scale] * len(image.shape)), order=0)
+        mask_cube = resize(mask_object != 0, scalevec, order=0)
+        if center_of_projection is None:
+            center_of_projection = scalevec / 2
+        else:
+            center_of_projection = center_of_projection * mask_cube.shape/image.shape
 
         segmented_cube = np.where(mask_cube, cube, -1)
-
+        pad_left = np.ceil(scalevec - center_of_projection).astype(int)
+        pad_right = np.ceil(center_of_projection ).astype(int)
+        padded_cube = np.pad(segmented_cube, pad_width=np.array((pad_left, pad_right)).T, mode='constant', constant_values=-1)
         t1 = time.time()
+        # breakpoint()
 
-        unwrapped = _st_lookup(segmented_cube, self.raysLUT, int(np.pi * self.scale), self.selected_projections)
-        # print(unwrapped)
+        unwrapped = _st_lookup(padded_cube, self.raysLUT, int(np.pi * self.scale), self.selected_projections)
+        
         t2 = time.time()
 
         result = {}
@@ -142,7 +152,7 @@ class SphericalTextureGenerator():
                         result[projfeatname] = coeffs
         t3 = time.time()
 
-        # print("time to do full unwrap and expand: \t", t3 - t0)
+        print("time to do full unwrap and expand: \t", t3 - t0)
         return result
     
     def save_ray_table(self, fpath, rays):
@@ -151,7 +161,7 @@ class SphericalTextureGenerator():
         outLUT = {}  # need to un-type the dictionary for pickling
         for k, v in rays.items():
             outLUT[k] = v
-        with open(fpath, "wb") as ofs:
+        with gzip.open(fpath, "wb") as ofs:
             pickle.dump(outLUT, ofs, protocol=pickle.HIGHEST_PROTOCOL)
         return
 
@@ -175,11 +185,12 @@ class SphericalTextureGenerator():
             raise ValueError("ndim cannot be None")
         # try to load or generate new
         # loading requires retyping of the dictionary for numba, which slows it down (see: https://github.com/numba/numba/issues/8797)
-        fpath = Path(user_cache_dir('SphericalTexture', "OG")) / f"sphericalLUT{self.scale}_{ndim}D.pickle"
+        fpath = Path(user_cache_dir('SphericalTexture', "OG")) / f"sphericalLUT{self.scale}_{ndim}D.gz"
+        # print(fpath)
         fpath.parent.mkdir(parents=True, exist_ok=True)
         try:
             t0 = time.time()
-            with open(fpath, "rb") as handle:
+            with gzip.open(fpath, "rb") as handle:
                 newLUT = pickle.load(handle) #change? 
             typed_rays = typed.Dict.empty(
                 key_type=typeof((1, 1)),
@@ -211,7 +222,9 @@ class SphericalTextureGenerator():
 @jit(nopython=True, nogil=True)
 def _st_lookup(img, raysLUT, fineness, projections):
     unwrapped = np.zeros((np.sum(projections), fineness + 1, fineness * 2 + 1), dtype=np.float64)
-    for loc, ray in raysLUT.items():
+    for ix, (loc, ray) in enumerate(raysLUT.items()):
+        if ix == 15600:
+            print(loc, ray)
         values = np.zeros(ray.shape[0])
         for ix, voxel in enumerate(ray):
             values[ix] = img[voxel[0], voxel[1], voxel[2]]
@@ -237,6 +250,9 @@ def _st_project(ray, values, projections):
         vec -= vec < 0  # integer flooring issues
         vals[proj] = np.linalg.norm(vec)
         proj += 1
+    if projections[2]: #WEIGHTED AVG
+        vals[proj] = (np.sum(values* np.linspace(0.1, 1, len(values))))/len(values)
+        proj += 1
     return vals
 
 
@@ -245,7 +261,7 @@ def _st_project(ray, values, projections):
 
 @jit(nopython=True)
 def _st_fill_ray_table(scale, GLQcoords, rays, ndim):
-    centroid = np.array([scale, scale, scale], dtype=np.float32) / 2.0
+    centroid = np.array([scale, scale, scale], dtype=np.float32)
     if ndim == 2:
         glq_lon = np.linspace(0, 2 * np.pi, int(scale * np.pi))
         glq_lat = np.array([0.0])
@@ -285,7 +301,7 @@ def _st_march(ray, centroid, scale, marchlen):
     increment = ray * marchlen
     distances = []
     normals = [np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])]
-    bounds = [np.array([scale, scale, scale]).astype(np.float64) - 0.4, np.array([0.0, 0.0, 0.0])]
+    bounds = [np.array([scale*2, scale*2, scale*2]).astype(np.float64) - 0.4, np.array([0.0, 0.0, 0.0])]
     for normal in normals:
         for bound in bounds:
             intersect = _st_isect_dist_line_plane(centroid, ray, bound, normal)
