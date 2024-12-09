@@ -152,7 +152,7 @@ class SphericalTextureGenerator():
                         result[projfeatname] = coeffs
         t3 = time.time()
 
-        print("time to do full unwrap and expand: \t", t3 - t0)
+        # print("time to do full unwrap and expand: \t", t3 - t0)
         return result
     
     def save_ray_table(self, fpath, rays):
@@ -186,7 +186,6 @@ class SphericalTextureGenerator():
         # try to load or generate new
         # loading requires retyping of the dictionary for numba, which slows it down (see: https://github.com/numba/numba/issues/8797)
         fpath = Path(user_cache_dir('SphericalTexture', "OG")) / f"sphericalLUT{self.scale}_{ndim}D.gz"
-        # print(fpath)
         fpath.parent.mkdir(parents=True, exist_ok=True)
         try:
             t0 = time.time()
@@ -223,8 +222,6 @@ class SphericalTextureGenerator():
 def _st_lookup(img, raysLUT, fineness, projections):
     unwrapped = np.zeros((np.sum(projections), fineness + 1, fineness * 2 + 1), dtype=np.float64)
     for ix, (loc, ray) in enumerate(raysLUT.items()):
-        if ix == 15600:
-            print(loc, ray)
         values = np.zeros(ray.shape[0])
         for ix, voxel in enumerate(ray):
             values[ix] = img[voxel[0], voxel[1], voxel[2]]
